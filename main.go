@@ -53,6 +53,7 @@ func (r *RateLimiter) Allow(ip string) bool {
 		}
 	}
 	if len(filtered) >= RateLimitPerMin {
+		log.Printf("rate limit exceeded (per min) for ip: %s", ip)
 		return false
 	}
 	var secCount int
@@ -62,6 +63,7 @@ func (r *RateLimiter) Allow(ip string) bool {
 		}
 	}
 	if secCount >= RateLimitPerSec {
+		log.Printf("rate limit exceeded (per sec) for ip: %s", ip)
 		return false
 	}
 	r.byIP[ip] = append(filtered, now)
@@ -88,7 +90,7 @@ func main() {
 		log.Fatal("Missing INFLUXDB_URL/TOKEN/ORG/BUCKET")
 	}
 
-	client := influxdb2.NewClient(influxURL, influxToken) // Go client 初期化 :contentReference[oaicite:3]{index=3}
+	client := influxdb2.NewClient(influxURL, influxToken)
 	queryAPI := client.QueryAPI(influxOrg)
 
 	rl := &RateLimiter{byIP: make(map[string][]time.Time)}
@@ -104,6 +106,7 @@ func main() {
 		minsStr := r.URL.Query().Get("minutes")
 		mins, err := strconv.Atoi(minsStr)
 		if err != nil || mins < MinMinutes || mins > MaxMinutes {
+			log.Printf("invalid minutes param '%s' from ip %s", minsStr, ip)
 			http.Error(w, "invalid minutes (1–1440)", http.StatusBadRequest)
 			return
 		}
@@ -115,7 +118,6 @@ func main() {
 		}
 		window := fmt.Sprintf("%ds", secs)
 
-		// 安全な文字列結合による Flux クエリ
 		flux := fmt.Sprintf(`
             from(bucket: "%s")
               |> range(start: -%dm, stop: now())
@@ -128,7 +130,7 @@ func main() {
 		ctx, cancel := context.WithTimeout(context.Background(), QueryTimeout)
 		defer cancel()
 
-		result, err := queryAPI.Query(ctx, flux) // 型安全 API 呼び出しに戻す :contentReference[oaicite:4]{index=4}
+		result, err := queryAPI.Query(ctx, flux)
 		if err != nil {
 			log.Printf("query error: %v", err)
 			http.Error(w, "query error", http.StatusInternalServerError)
@@ -153,7 +155,13 @@ func main() {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(points)
+		httpResp, err := json.Marshal(points)
+		if err != nil {
+			log.Printf("encode error: %v", err)
+			http.Error(w, "encode error", http.StatusInternalServerError)
+			return
+		}
+		w.Write(httpResp)
 	})
 
 	server := &http.Server{
@@ -165,5 +173,5 @@ func main() {
 	}
 
 	log.Println("Server listening on :8080")
-	log.Fatal(server.ListenAndServe()) // TLS は Cloudflare Tunnel で終端
+	log.Fatal(server.ListenAndServe())
 }
