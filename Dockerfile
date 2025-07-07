@@ -13,6 +13,6 @@ RUN CGO_ENABLED=0 GOARCH=${TARGETARCH} GOOS=linux go build -ldflags="-s -w" -o m
 FROM docker.io/debian:bookworm-slim
 
 WORKDIR /root/
-COPY --from=builder /app/main.
+COPY --from=builder /app/main .
 
 ENTRYPOINT [ "./main" ]
